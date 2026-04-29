@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser'
+import { ASSET_KEYS, EXPECTED_ASSETS, getDiscoveredAssetUrl } from '../config/assets.js'
 import {
   ENEMY_SPEED,
   FIRE_COOLDOWN,
@@ -11,6 +12,33 @@ import {
 export class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene')
+  }
+
+  preload() {
+    this.failedAssetKeys = new Set()
+
+    this.load.on('loaderror', (file) => {
+      this.failedAssetKeys.add(file.key)
+    })
+
+    Object.values(EXPECTED_ASSETS).forEach((asset) => {
+      const url = getDiscoveredAssetUrl(asset)
+
+      // Missing future art is not queued, which lets generated placeholders stay in use.
+      if (!url) {
+        return
+      }
+
+      if (asset.type === 'spritesheet') {
+        this.load.spritesheet(asset.key, url, {
+          frameWidth: asset.frameWidth,
+          frameHeight: asset.frameHeight,
+        })
+        return
+      }
+
+      this.load.image(asset.key, url)
+    })
   }
 
   create() {
@@ -84,10 +112,24 @@ export class GameScene extends Phaser.Scene {
     graphics.strokeRoundedRect(0, 0, 42, 42, 10)
     graphics.generateTexture('enemy-placeholder', 46, 46)
     graphics.destroy()
+
+    if (this.hasLoadedTexture(ASSET_KEYS.explosion)) {
+      this.anims.create({
+        key: 'explosion-pop',
+        frames: this.anims.generateFrameNumbers(ASSET_KEYS.explosion, { start: 0, end: 5 }),
+        frameRate: 18,
+        hideOnComplete: true,
+      })
+    }
   }
 
   createWorld() {
     this.cameras.main.setBackgroundColor('#f7fbff')
+
+    if (this.hasLoadedTexture(ASSET_KEYS.background)) {
+      this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, ASSET_KEYS.background)
+      return
+    }
 
     for (let x = 70; x < GAME_WIDTH; x += 120) {
       this.add.circle(x, 96, 3, 0xc7d2fe, 0.85)
@@ -100,7 +142,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   createPlayer() {
-    this.player = this.physics.add.sprite(110, GAME_HEIGHT / 2, 'player-placeholder')
+    this.player = this.physics.add.sprite(
+      110,
+      GAME_HEIGHT / 2,
+      this.getTextureKey(EXPECTED_ASSETS.player),
+    )
     this.player.setCollideWorldBounds(true)
     this.player.body.setSize(58, 30).setOffset(4, 5)
   }
@@ -158,7 +204,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   fireProjectile(time) {
-    const projectile = this.projectiles.create(this.player.x + 45, this.player.y, 'projectile-placeholder')
+    const projectile = this.projectiles.create(
+      this.player.x + 45,
+      this.player.y,
+      this.getTextureKey(EXPECTED_ASSETS.playerProjectile),
+    )
     projectile.setVelocityX(PROJECTILE_SPEED)
     projectile.body.setSize(20, 8)
     this.lastFiredAt = time
@@ -166,12 +216,17 @@ export class GameScene extends Phaser.Scene {
 
   spawnEnemy() {
     const y = Phaser.Math.Between(86, GAME_HEIGHT - 86)
-    const enemy = this.enemies.create(GAME_WIDTH + 34, y, 'enemy-placeholder')
+    const enemy = this.enemies.create(
+      GAME_WIDTH + 34,
+      y,
+      this.getTextureKey(EXPECTED_ASSETS.enemyBasic),
+    )
     enemy.setVelocityX(-(ENEMY_SPEED + Math.min(this.score * 3, 130)))
     enemy.body.setSize(38, 38).setOffset(4, 4)
   }
 
   handleProjectileEnemy(projectile, enemy) {
+    this.playExplosion(enemy.x, enemy.y)
     projectile.destroy()
     enemy.destroy()
     this.score += 10
@@ -207,5 +262,29 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(250, () => {
       this.scene.start('GameOverScene', { score: this.score })
     })
+  }
+
+  getTextureKey(asset) {
+    if (this.hasLoadedTexture(asset.key)) {
+      return asset.key
+    }
+
+    if (asset.fallbackAssetKey && this.hasLoadedTexture(asset.fallbackAssetKey)) {
+      return asset.fallbackAssetKey
+    }
+
+    return asset.placeholderKey
+  }
+
+  hasLoadedTexture(key) {
+    return this.textures.exists(key) && !this.failedAssetKeys.has(key)
+  }
+
+  playExplosion(x, y) {
+    if (!this.hasLoadedTexture(ASSET_KEYS.explosion) || !this.anims.exists('explosion-pop')) {
+      return
+    }
+
+    this.add.sprite(x, y, ASSET_KEYS.explosion).play('explosion-pop')
   }
 }
